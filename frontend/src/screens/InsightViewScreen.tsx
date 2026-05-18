@@ -11,20 +11,17 @@ import {
   TextInput,
   ScrollView,
   Keyboard,
-  Animated,
 } from "react-native";
-import { searchBooks, recommendBooks, generateActions, getActionItems } from "../api/client";
+import { searchBooks, recommendBooks, generateActions } from "../api/client";
 import { Book, Category, CATEGORIES, RootStackParamList } from "../types";
 import type { StackScreenProps } from "@react-navigation/stack";
 import { COLORS, SHADOWS, getCategoryColor } from "../constants/theme";
-import JuicerMachine from "../components/JuicerMachine";
-import JuiceBar from "../components/JuiceBar";
 
-const EXTRACTION_MSGS = [
-  { emoji: "📚", label: "책을 즙기에 넣는 중...", sub: "네이버 서평을 수집하고 있어요" },
-  { emoji: "🔩", label: "착즙 시작!", sub: "책 내용을 분석하고 있어요" },
-  { emoji: "💚", label: "핵심 영양소 추출 중", sub: "AI가 핵심 메시지를 짜내고 있어요" },
-  { emoji: "🍹", label: "책즙 농축 중", sub: "실천 가능한 15개 액션으로 완성 중..." },
+const GENERATION_STEPS = [
+  { emoji: "🔍", label: "서평 수집 중", sub: "네이버에서 독자 리뷰를 모으고 있어요" },
+  { emoji: "📖", label: "책 내용 파악 중", sub: "수집한 서평을 읽고 분석하고 있어요" },
+  { emoji: "🤖", label: "인사이트 추출 중", sub: "AI가 핵심 메시지를 정리하고 있어요" },
+  { emoji: "✨", label: "액션 아이템 생성 중", sub: "실천 가능한 15개 아이템을 만들고 있어요" },
 ];
 
 type Props = StackScreenProps<RootStackParamList, "Main">;
@@ -44,22 +41,8 @@ export default function InsightViewScreen({ navigation }: Props) {
   const [longWait, setLongWait] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [errorBook, setErrorBook] = useState<Book | null>(null);
-  const [doneCount, setDoneCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // 착즙 로딩 애니메이션
-  const juiceFill = useRef(new Animated.Value(0)).current;
-  const bladeRotate = useRef(new Animated.Value(0)).current;
-  const msgOpacity = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    getActionItems().then((res) => {
-      const items = res.data || [];
-      const done = items.filter((it: any) => it.status === "done").length;
-      setDoneCount(done);
-    }).catch(() => {});
-  }, []);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -85,41 +68,17 @@ export default function InsightViewScreen({ navigation }: Props) {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [searchText]);
 
+  // 생성 중 스텝 순차 진행 + 60초 대기 메시지
   useEffect(() => {
     if (!generating) {
       setCurrentStep(0);
       setLongWait(false);
-      juiceFill.setValue(0);
-      bladeRotate.setValue(0);
       return;
     }
     setCurrentStep(0);
     setLongWait(false);
-
-    // 블레이드 회전
-    Animated.loop(
-      Animated.timing(bladeRotate, { toValue: 1, duration: 700, useNativeDriver: true })
-    ).start();
-
-    // 주스 채우기 (단계별)
     const delays = [8000, 20000, 35000];
-    const stepTimers = delays.map((d, i) =>
-      setTimeout(() => {
-        setCurrentStep(i + 1);
-        Animated.timing(juiceFill, {
-          toValue: (i + 2) / EXTRACTION_MSGS.length,
-          duration: 600,
-          useNativeDriver: false,
-        }).start();
-      }, d)
-    );
-    // 초기 채움
-    Animated.timing(juiceFill, {
-      toValue: 1 / EXTRACTION_MSGS.length,
-      duration: 600,
-      useNativeDriver: false,
-    }).start();
-
+    const stepTimers = delays.map((d, i) => setTimeout(() => setCurrentStep(i + 1), d));
     const longWaitTimer = setTimeout(() => setLongWait(true), 60000);
     return () => {
       stepTimers.forEach(clearTimeout);
@@ -127,15 +86,6 @@ export default function InsightViewScreen({ navigation }: Props) {
     };
   }, [generating]);
 
-  const spin = bladeRotate.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "360deg"],
-  });
-
-  const juiceHeight = juiceFill.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0%", "100%"],
-  });
 
   const handleSearch = async () => {
     if (!searchText.trim()) return;
@@ -201,7 +151,7 @@ export default function InsightViewScreen({ navigation }: Props) {
       if (controller.signal.aborted) return;
       const msg =
         e?.response?.data?.detail ??
-        (e?.code === "ECONNABORTED" ? "요청 시간이 초과됐습니다." : "착즙 중 오류가 발생했습니다.");
+        (e?.code === "ECONNABORTED" ? "요청 시간이 초과됐습니다." : "인사이트 생성 중 오류가 발생했습니다.");
       setErrorBook(book);
       setGenerationError(msg);
     } finally {
@@ -219,55 +169,66 @@ export default function InsightViewScreen({ navigation }: Props) {
     setLongWait(false);
   };
 
-  // ── 착즙 로딩 화면 ───────────────────────────────────────────────────────
+  // ── 생성 중 로딩 화면 ────────────────────────────────────────────────────
   if (generating) {
-    const step = EXTRACTION_MSGS[Math.min(currentStep, EXTRACTION_MSGS.length - 1)];
+    const step = GENERATION_STEPS[Math.min(currentStep, GENERATION_STEPS.length - 1)];
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingOuter}>
           <View style={styles.loadingCard}>
-            <Text style={styles.loadingHeadline}>착즙 중 🍃</Text>
+            {/* 책 썸네일 또는 아이콘 */}
+            {selectedBook?.thumbnail ? (
+              <Image source={{ uri: selectedBook.thumbnail }} style={styles.loadingThumb} />
+            ) : (
+              <View style={styles.loadingThumbPlaceholder}>
+                <Text style={styles.loadingThumbIcon}>📚</Text>
+              </View>
+            )}
+
             <Text style={styles.loadingBookTitle} numberOfLines={2}>
               {selectedBook?.title}
             </Text>
+            {selectedBook?.author ? (
+              <Text style={styles.loadingBookAuthor}>{selectedBook.author}</Text>
+            ) : null}
 
-            {/* 즙기 + 회전 블레이드 */}
-            <View style={styles.juicerWrap}>
-              {selectedBook?.thumbnail ? (
-                <Image source={{ uri: selectedBook.thumbnail }} style={styles.loadingThumb} />
-              ) : (
-                <View style={styles.loadingThumbEmpty}>
-                  <Text style={{ fontSize: 28 }}>📚</Text>
-                </View>
-              )}
-              <View style={styles.juicerBody}>
-                <Animated.Text style={[styles.bladeSpin, { transform: [{ rotate: spin }] }]}>
-                  ✳︎
-                </Animated.Text>
-              </View>
-              {/* 주스 채우기 컵 */}
-              <View style={styles.juiceCup}>
-                <Animated.View style={[styles.juiceFill, { height: juiceHeight }]} />
-              </View>
+            {/* 진행 스텝 도트 */}
+            <View style={styles.stepDotsRow}>
+              {GENERATION_STEPS.map((_, i) => (
+                <View
+                  key={i}
+                  style={[
+                    styles.stepDot,
+                    i < currentStep && styles.stepDotDone,
+                    i === currentStep && styles.stepDotActive,
+                  ]}
+                />
+              ))}
             </View>
 
-            {/* 메시지 */}
-            <View style={styles.extractionMsg}>
-              <Text style={styles.extractionEmoji}>{step.emoji}</Text>
+            {/* 현재 스텝 텍스트 */}
+            <View style={styles.stepTextBox}>
+              <Text style={styles.stepEmoji}>{step.emoji}</Text>
               <View>
-                <Text style={styles.extractionLabel}>{step.label}</Text>
-                <Text style={styles.extractionSub}>{step.sub}</Text>
+                <Text style={styles.stepLabel}>{step.label}</Text>
+                <Text style={styles.stepSub}>{step.sub}</Text>
               </View>
             </View>
 
+            <ActivityIndicator size="small" color={COLORS.primary} style={{ marginTop: 16 }} />
             <Text style={styles.loadingHint}>보통 40~60초 소요됩니다</Text>
             {longWait && (
               <Text style={styles.longWaitText}>
-                평소보다 조금 더 걸리고 있어요{"\n"}잠시만 기다려주세요 🌿
+                평소보다 조금 더 걸리고 있어요{"\n"}잠시만 기다려주세요
               </Text>
             )}
-            <TouchableOpacity style={styles.cancelBtn} onPress={handleCancelGeneration}>
-              <Text style={styles.cancelBtnText}>착즙 취소</Text>
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={handleCancelGeneration}
+              accessibilityRole="button"
+              accessibilityLabel="인사이트 생성 취소"
+            >
+              <Text style={styles.cancelBtnText}>취소</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -281,14 +242,14 @@ export default function InsightViewScreen({ navigation }: Props) {
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingOuter}>
           <View style={styles.loadingCard}>
-            <Text style={styles.errorIcon}>🍋</Text>
-            <Text style={styles.errorTitle}>즙 짜기 실패</Text>
+            <Text style={styles.errorIcon}>⚠️</Text>
+            <Text style={styles.errorTitle}>인사이트 생성 실패</Text>
             <Text style={styles.errorMessage}>{generationError}</Text>
             <TouchableOpacity
               style={styles.retryBtn}
               onPress={() => errorBook && startGenerating(errorBook)}
             >
-              <Text style={styles.retryBtnText}>🔄 다시 짜기</Text>
+              <Text style={styles.retryBtnText}>다시 시도</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.backBtn}
@@ -302,27 +263,23 @@ export default function InsightViewScreen({ navigation }: Props) {
     );
   }
 
-  // ── 메인 화면 ─────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.container}>
       {/* 헤더 */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>책즙기 🧃</Text>
-          <Text style={styles.subtitle}>읽지 말고, 짜라</Text>
+          <Text style={styles.title}>Action Log</Text>
+          <Text style={styles.subtitle}>독서 인사이트 → 실천 액션</Text>
         </View>
         <TouchableOpacity
           style={styles.myLifeBtn}
           onPress={() => navigation.navigate("MyLife")}
           accessibilityRole="button"
-          accessibilityLabel="나의 책즙 보관함으로 이동"
+          accessibilityLabel="My Life 보관함으로 이동"
         >
-          <Text style={styles.myLifeBtnText}>내 책즙 →</Text>
+          <Text style={styles.myLifeBtnText}>My Life →</Text>
         </TouchableOpacity>
       </View>
-
-      {/* 이번 달 게이지 */}
-      <JuiceBar done={doneCount} goal={10} />
 
       {/* 검색 바 */}
       <View style={styles.searchWrapper}>
@@ -331,7 +288,7 @@ export default function InsightViewScreen({ navigation }: Props) {
             style={styles.searchInput}
             value={searchText}
             onChangeText={setSearchText}
-            placeholder="짤 책 제목을 입력하세요 📚"
+            placeholder="읽은 책 제목을 입력하세요"
             placeholderTextColor={COLORS.textLight}
             returnKeyType="search"
             onSubmitEditing={handleSearch}
@@ -381,6 +338,7 @@ export default function InsightViewScreen({ navigation }: Props) {
           </View>
         )}
 
+        {/* 검색 결과 없을 때 직접 생성 유도 */}
         {!autocompleteLoading && searchText.trim().length >= 2 && suggestions.length === 0 && showSuggestions === false && (
           <View style={styles.dropdown}>
             <TouchableOpacity
@@ -388,22 +346,22 @@ export default function InsightViewScreen({ navigation }: Props) {
               onPress={() => startGenerating({ title: searchText.trim(), author: "" })}
             >
               <View style={[styles.dropdownThumb, styles.dropdownThumbEmpty]}>
-                <Text style={{ fontSize: 12 }}>🍹</Text>
+                <Text style={{ fontSize: 12 }}>✨</Text>
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.dropdownTitle} numberOfLines={1}>
-                  "{searchText.trim()}" 즉석 착즙
+                  "{searchText.trim()}" 인사이트 바로 추출
                 </Text>
-                <Text style={styles.dropdownAuthor}>검색 결과 없음 — 직접 짜기</Text>
+                <Text style={styles.dropdownAuthor}>검색 결과 없음 — 직접 생성하기</Text>
               </View>
             </TouchableOpacity>
           </View>
         )}
       </View>
 
-      {/* 카테고리 */}
+      {/* 카테고리 버튼 */}
       <View style={styles.section}>
-        <Text style={styles.sectionLabel}>카테고리별 착즙</Text>
+        <Text style={styles.sectionLabel}>관심사로 찾기</Text>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -432,11 +390,11 @@ export default function InsightViewScreen({ navigation }: Props) {
         </ScrollView>
       </View>
 
-      {/* 책 목록 / 즙기 / 가이드 */}
+      {/* 카테고리 도서 목록 */}
       {categoryLoading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={styles.loadingCatText}>{selectedCategory} 도서 즙 준비 중...</Text>
+          <Text style={styles.loadingCatText}>{selectedCategory} 도서를 불러오는 중...</Text>
         </View>
       ) : books.length > 0 ? (
         <ScrollView
@@ -445,7 +403,7 @@ export default function InsightViewScreen({ navigation }: Props) {
           keyboardShouldPersistTaps="handled"
         >
           <Text style={styles.resultCount}>
-            {bookListTitle} {books.length}권 — 탭하면 즉시 착즙
+            {bookListTitle} {books.length}권 — 탭하면 인사이트 추출
           </Text>
           {books.map((item, idx) => (
             <TouchableOpacity
@@ -468,17 +426,20 @@ export default function InsightViewScreen({ navigation }: Props) {
                   <Text style={styles.bookDesc} numberOfLines={2}>{item.description}</Text>
                 ) : null}
               </View>
-              <Text style={styles.extractBtn}>착즙 🍹</Text>
+              <Text style={styles.arrowIcon}>›</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
       ) : (
         <View style={styles.center}>
-          <JuicerMachine bookTitle={undefined} isExtracting={false} />
-          <View style={styles.guideSteps}>
-            <Text style={styles.guideStep}>① 책 제목 검색 또는 카테고리 선택</Text>
-            <Text style={styles.guideStep}>② AI가 핵심 인사이트를 착즙</Text>
-            <Text style={styles.guideStep}>③ 내 책즙 보관함에서 매일 한 모금씩</Text>
+          <View style={styles.guideCard}>
+            <Text style={styles.guideIcon}>📖</Text>
+            <Text style={styles.guideTitle}>책 인사이트를 바로 추출하세요</Text>
+            <View style={styles.guideSteps}>
+              <Text style={styles.guideStep}>① 읽은 책 제목 검색</Text>
+              <Text style={styles.guideStep}>② AI가 핵심 인사이트 15개 생성</Text>
+              <Text style={styles.guideStep}>③ My Life에 담고 실천 계획 작성</Text>
+            </View>
           </View>
         </View>
       )}
@@ -489,76 +450,84 @@ export default function InsightViewScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
 
-  // 착즙 로딩
-  loadingOuter: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24 },
+  // 로딩 화면
+  loadingOuter: {
+    flex: 1, justifyContent: "center", alignItems: "center", padding: 24,
+  },
   loadingCard: {
     backgroundColor: COLORS.card, borderRadius: 24, padding: 28,
-    alignItems: "center", width: "100%", ...SHADOWS.card,
+    alignItems: "center", width: "100%", gap: 0,
+    ...SHADOWS.card,
   },
-  loadingHeadline: { fontSize: 22, fontWeight: "800", color: COLORS.primary, marginBottom: 6 },
+  loadingThumb: {
+    width: 80, height: 108, borderRadius: 8, marginBottom: 16,
+  },
+  loadingThumbPlaceholder: {
+    width: 80, height: 108, borderRadius: 8, backgroundColor: "#f0f0f8",
+    justifyContent: "center", alignItems: "center", marginBottom: 16,
+  },
+  loadingThumbIcon: { fontSize: 32 },
   loadingBookTitle: {
-    fontSize: 16, fontWeight: "700", color: COLORS.text, textAlign: "center", marginBottom: 20,
+    fontSize: 18, fontWeight: "800", color: COLORS.text,
+    textAlign: "center", lineHeight: 26,
   },
-  juicerWrap: { flexDirection: "row", alignItems: "center", gap: 16, marginBottom: 20 },
-  loadingThumb: { width: 60, height: 82, borderRadius: 6 },
-  loadingThumbEmpty: {
-    width: 60, height: 82, borderRadius: 6, backgroundColor: COLORS.background,
-    justifyContent: "center", alignItems: "center",
+  loadingBookAuthor: {
+    fontSize: 13, color: COLORS.textMuted, marginTop: 4, marginBottom: 20,
   },
-  juicerBody: {
-    width: 64, height: 64, borderRadius: 32,
-    backgroundColor: COLORS.primaryMid,
-    justifyContent: "center", alignItems: "center",
-    borderWidth: 3, borderColor: COLORS.primary,
+  stepDotsRow: {
+    flexDirection: "row", gap: 8, marginBottom: 20,
   },
-  bladeSpin: { fontSize: 28, color: "#fff" },
-  juiceCup: {
-    width: 32, height: 64, borderWidth: 2, borderColor: COLORS.primaryMid,
-    borderRadius: 6, overflow: "hidden", justifyContent: "flex-end",
-    backgroundColor: COLORS.background,
+  stepDot: {
+    width: 8, height: 8, borderRadius: 4, backgroundColor: "#e0e0f0",
   },
-  juiceFill: {
-    width: "100%", backgroundColor: COLORS.citrus, borderRadius: 4,
-  },
-  extractionMsg: {
+  stepDotDone: { backgroundColor: COLORS.success },
+  stepDotActive: { backgroundColor: COLORS.primary, width: 24 },
+  stepTextBox: {
     flexDirection: "row", alignItems: "center", gap: 12,
-    backgroundColor: COLORS.background, borderRadius: 14,
-    padding: 14, width: "100%", marginBottom: 12,
+    backgroundColor: "#f5f5fa", borderRadius: 14, padding: 14, width: "100%",
   },
-  extractionEmoji: { fontSize: 24 },
-  extractionLabel: { fontSize: 14, fontWeight: "700", color: COLORS.text },
-  extractionSub: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
-  loadingHint: { fontSize: 11, color: COLORS.textLight },
+  stepEmoji: { fontSize: 24 },
+  stepLabel: { fontSize: 14, fontWeight: "700", color: COLORS.text },
+  stepSub: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
+  loadingHint: {
+    fontSize: 11, color: COLORS.textLight, marginTop: 14,
+  },
   longWaitText: {
-    fontSize: 12, color: COLORS.primary, marginTop: 8, textAlign: "center", lineHeight: 18,
+    fontSize: 12, color: COLORS.primary, marginTop: 8,
+    textAlign: "center", lineHeight: 18,
   },
   cancelBtn: {
-    marginTop: 16, paddingVertical: 10, paddingHorizontal: 32,
+    marginTop: 20, paddingVertical: 10, paddingHorizontal: 32,
     borderRadius: 20, borderWidth: 1, borderColor: COLORS.border,
   },
   cancelBtnText: { fontSize: 14, color: COLORS.textMuted },
 
-  // 에러
-  errorIcon: { fontSize: 44, marginBottom: 12 },
-  errorTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 8 },
+  // 에러 화면
+  errorIcon: { fontSize: 40, marginBottom: 12 },
+  errorTitle: {
+    fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 8,
+  },
   errorMessage: {
-    fontSize: 14, color: COLORS.textSecondary, textAlign: "center", lineHeight: 22, marginBottom: 24,
+    fontSize: 14, color: COLORS.textSecondary, textAlign: "center",
+    lineHeight: 22, marginBottom: 24,
   },
   retryBtn: {
     backgroundColor: COLORS.primary, borderRadius: 14,
     paddingVertical: 12, paddingHorizontal: 36, marginBottom: 10,
   },
   retryBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
-  backBtn: { paddingVertical: 10, paddingHorizontal: 20 },
+  backBtn: {
+    paddingVertical: 10, paddingHorizontal: 20,
+  },
   backBtnText: { fontSize: 14, color: COLORS.textMuted },
 
   // 헤더
   header: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8,
+    paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12,
   },
   title: { fontSize: 26, fontWeight: "800", color: COLORS.text },
-  subtitle: { fontSize: 12, color: COLORS.primaryMid, marginTop: 2, fontWeight: "600" },
+  subtitle: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
   myLifeBtn: {
     backgroundColor: COLORS.primary, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
   },
@@ -568,7 +537,8 @@ const styles = StyleSheet.create({
   searchWrapper: { marginHorizontal: 16, marginBottom: 4, zIndex: 10 },
   searchRow: {
     flexDirection: "row", alignItems: "center", backgroundColor: COLORS.card,
-    borderRadius: 14, paddingLeft: 14, paddingRight: 6, ...SHADOWS.card,
+    borderRadius: 14, paddingLeft: 14, paddingRight: 6,
+    ...SHADOWS.card,
   },
   searchInput: { flex: 1, height: 48, fontSize: 15, color: COLORS.text },
   searchIcon: { marginRight: 6 },
@@ -589,15 +559,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 10, gap: 10,
   },
   dropdownDivider: { borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  dropdownThumb: { width: 36, height: 48, borderRadius: 4, backgroundColor: "#f0f0f0" },
+  dropdownThumb: {
+    width: 36, height: 48, borderRadius: 4, backgroundColor: "#f0f0f0",
+  },
   dropdownThumbEmpty: { justifyContent: "center", alignItems: "center" },
   dropdownTitle: { fontSize: 14, fontWeight: "600", color: COLORS.text },
   dropdownAuthor: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
 
   // 카테고리
-  section: { marginTop: 12, marginBottom: 4 },
+  section: { marginTop: 16, marginBottom: 4 },
   sectionLabel: {
-    fontSize: 11, fontWeight: "700", color: COLORS.textMuted,
+    fontSize: 11, fontWeight: "700", color: COLORS.textLight,
     textTransform: "uppercase", letterSpacing: 0.5, marginLeft: 20, marginBottom: 10,
   },
   categoryRow: { paddingHorizontal: 16, gap: 8 },
@@ -621,11 +593,19 @@ const styles = StyleSheet.create({
   bookTitle: { fontSize: 14, fontWeight: "700", color: COLORS.text, lineHeight: 20 },
   bookAuthor: { fontSize: 12, color: COLORS.textSecondary },
   bookDesc: { fontSize: 11, color: COLORS.textMuted, lineHeight: 16 },
-  extractBtn: { fontSize: 12, fontWeight: "700", color: COLORS.primary, marginLeft: 8 },
+  arrowIcon: { fontSize: 24, color: COLORS.textLight, marginLeft: 8 },
 
-  // 가이드
+  // 가이드 / 빈 상태
   center: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24 },
-  guideSteps: { gap: 6, alignSelf: "flex-start", marginTop: 12, paddingHorizontal: 8 },
-  guideStep: { fontSize: 14, color: COLORS.textSecondary, lineHeight: 24 },
+  guideCard: {
+    backgroundColor: COLORS.card, borderRadius: 20, padding: 28,
+    alignItems: "center", width: "100%", gap: 12,
+    ...SHADOWS.small,
+  },
+  guideIcon: { fontSize: 40, marginBottom: 4 },
+  guideTitle: { fontSize: 16, fontWeight: "700", color: COLORS.text, textAlign: "center" },
+  guideSteps: { gap: 6, alignSelf: "flex-start", marginTop: 4 },
+  guideStep: { fontSize: 14, color: COLORS.textSecondary, lineHeight: 22 },
+
   loadingCatText: { fontSize: 13, color: COLORS.textMuted, marginTop: 8 },
 });

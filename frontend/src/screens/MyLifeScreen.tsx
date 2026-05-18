@@ -12,7 +12,6 @@ import {
 import { useFocusEffect } from "@react-navigation/native";
 import CategoryTabs from "../components/CategoryTabs";
 import SkeletonCard from "../components/SkeletonCard";
-import NutritionLabel from "../components/NutritionLabel";
 import { getActionItems, getLogs, deleteLog, upsertLog } from "../api/client";
 import * as Haptics from "expo-haptics";
 import { ActionItem, Category, UserLog, RootStackParamList } from "../types";
@@ -37,9 +36,9 @@ function formatDate(dateStr: string): string {
 // 카테고리별 빈 상태 메시지
 const EMPTY_MESSAGES: Record<string, { icon: string; title: string; sub: string }> = {
   "전체": {
-    icon: "🧃",
-    title: "아직 짜둔 책즙이 없어요",
-    sub: "홈에서 책을 검색하고\n첫 번째 책즙을 짜보세요",
+    icon: "📚",
+    title: "아직 담긴 인사이트가 없습니다",
+    sub: "홈에서 책을 검색하고\n인사이트를 담아보세요",
   },
   "투자": {
     icon: "💰",
@@ -172,7 +171,7 @@ export default function MyLifeScreen({ navigation }: Props) {
           <Text style={styles.backBtnText}>← 홈</Text>
         </TouchableOpacity>
         <View style={styles.headerMain}>
-          <Text style={styles.title}>내 책즙 🧃</Text>
+          <Text style={styles.title}>My Life</Text>
           {savedItems.length > 0 && (
             <View style={styles.statsRow}>
               <Text style={styles.statsText}>{savedItems.length}개 담음</Text>
@@ -205,7 +204,6 @@ export default function MyLifeScreen({ navigation }: Props) {
         </View>
       )}
 
-      <NutritionLabel items={savedItems} />
       <CategoryTabs selected={selectedCategory} onSelect={setSelectedCategory} />
 
       {loading && !refreshing ? (
@@ -222,7 +220,7 @@ export default function MyLifeScreen({ navigation }: Props) {
               style={styles.goHomeBtn}
               onPress={() => navigation.navigate("Main")}
             >
-              <Text style={styles.goHomeBtnText}>🍹 책 착즙하러 가기 →</Text>
+              <Text style={styles.goHomeBtnText}>인사이트 찾으러 가기 →</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -283,7 +281,7 @@ export default function MyLifeScreen({ navigation }: Props) {
                         <Text style={styles.notePreview} numberOfLines={1}>{log.note}</Text>
                       </View>
                     ) : (
-                      <Text style={styles.noNote}>탭해서 오늘의 실천 계획 작성 →</Text>
+                      <Text style={styles.noNote}>탭해서 실천 계획 작성 →</Text>
                     )}
                   </TouchableOpacity>
 
@@ -296,7 +294,7 @@ export default function MyLifeScreen({ navigation }: Props) {
                       accessibilityLabel={isDone ? "완료 취소" : "완료 표시"}
                     >
                       <Text style={[styles.doneBtnText, isDone && styles.doneBtnTextActive]}>
-                        {isDone ? "🟢 다 마셨어요" : "⭕ 마시기"}
+                        {isDone ? "✓  완료됨" : "○  완료 표시"}
                       </Text>
                     </TouchableOpacity>
                     <View style={styles.actionDivider} />
@@ -306,7 +304,7 @@ export default function MyLifeScreen({ navigation }: Props) {
                       accessibilityRole="button"
                       accessibilityLabel="My Life에서 삭제"
                     >
-                      <Text style={styles.deleteBtnText}>버리기 🗑</Text>
+                      <Text style={styles.deleteBtnText}>🗑  삭제</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
