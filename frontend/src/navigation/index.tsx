@@ -14,9 +14,13 @@ export default function AppNavigator() {
   const [initialRoute, setInitialRoute] = useState<keyof RootStackParamList | null>(null);
 
   useEffect(() => {
-    AsyncStorage.getItem(ONBOARDING_KEY).then((done) => {
-      setInitialRoute(done ? "Main" : "Onboarding");
-    });
+    AsyncStorage.getItem(ONBOARDING_KEY)
+      .then((done) => {
+        setInitialRoute(done ? "Main" : "Onboarding");
+      })
+      .catch(() => {
+        setInitialRoute("Main");
+      });
   }, []);
 
   if (!initialRoute) return null;

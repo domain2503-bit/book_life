@@ -462,6 +462,7 @@ export default function ActionDetailScreen({ route, navigation }: Props) {
                 styles.doneBtn,
                 isDone && { backgroundColor: COLORS.success, borderColor: COLORS.success },
               ]}
+              disabled={saving}
               onPress={async () => {
                 const next = !isDone;
                 setIsDone(next);
@@ -469,8 +470,12 @@ export default function ActionDetailScreen({ route, navigation }: Props) {
                 try {
                   await upsertLog(currentItem.id, next ? "done" : "pending", note);
                   showToast(next ? "🎉 실천 완료!" : "다시 실천 예정으로 변경했습니다");
-                } catch {}
-                setSaving(false);
+                } catch {
+                  setIsDone(!next);
+                  Alert.alert("오류", "업데이트 중 오류가 발생했습니다.");
+                } finally {
+                  setSaving(false);
+                }
               }}
             >
               <Text style={[styles.doneBtnText, isDone && { color: "#fff" }]}>

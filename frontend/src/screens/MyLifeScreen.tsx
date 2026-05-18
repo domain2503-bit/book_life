@@ -77,6 +77,7 @@ export default function MyLifeScreen({ navigation }: Props) {
   const [logs, setLogs] = useState<Record<string, UserLog>>({});
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [fetchError, setFetchError] = useState(false);
   const cache = useRef<Record<string, CacheEntry>>({});
   const CACHE_TTL = 30_000; // 30초
 
@@ -91,6 +92,7 @@ export default function MyLifeScreen({ navigation }: Props) {
       return;
     }
     setLoading(true);
+    setFetchError(false);
     try {
       const cat = selectedCategory === "전체" ? undefined : selectedCategory;
       const [itemsRes, logsRes] = await Promise.all([
@@ -108,6 +110,7 @@ export default function MyLifeScreen({ navigation }: Props) {
       setLogs(logMap);
     } catch (e) {
       console.error(e);
+      setFetchError(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -210,6 +213,20 @@ export default function MyLifeScreen({ navigation }: Props) {
         <View style={{ paddingTop: 8 }}>
           {[0, 1, 2].map((i) => <SkeletonCard key={i} />)}
         </View>
+      ) : fetchError ? (
+        <View style={styles.center}>
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyIcon}>⚠️</Text>
+            <Text style={styles.emptyTitle}>데이터를 불러오지 못했습니다</Text>
+            <Text style={styles.emptySub}>네트워크 연결을 확인하고{"\n"}다시 시도해주세요</Text>
+            <TouchableOpacity
+              style={styles.goHomeBtn}
+              onPress={() => fetchData(true)}
+            >
+              <Text style={styles.goHomeBtnText}>다시 시도</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       ) : savedItems.length === 0 ? (
         <View style={styles.center}>
           <View style={styles.emptyCard}>
@@ -232,7 +249,7 @@ export default function MyLifeScreen({ navigation }: Props) {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => { setRefreshing(true); fetchData(); }}
+              onRefresh={() => { setRefreshing(true); fetchData(true); }}
               tintColor={COLORS.primary}
             />
           }
