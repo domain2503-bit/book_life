@@ -1,32 +1,48 @@
 export const COLORS = {
-  primary: "#6c63ff",
-  primaryLight: "#6c63ff22",
-  background: "#f5f5fa",
-  card: "#ffffff",
-  text: "#1a1a2e",
-  textSecondary: "#555",
-  textMuted: "#888",
-  textLight: "#bbb",
-  border: "#f0f0f0",
-  success: "#2a9d8f",
-  successLight: "#2a9d8f22",
-  danger: "#e76f51",
-  dangerLight: "#e76f5122",
+  // 주스 브랜드 컬러
+  primary: "#2D7D5E",
+  primaryLight: "#2D7D5E22",
+  primaryMid: "#52A67A",
+  primaryLighter: "#A8D5B5",
 
+  // 추출/로딩 — 시트러스
+  citrus: "#FF8C42",
+  citrusLight: "#FFE0C8",
+
+  // 배경/서피스
+  background: "#F2F9F1",
+  card: "#FFFFFF",
+
+  // 텍스트
+  text: "#1A2E1E",
+  textSecondary: "#3D5A46",
+  textMuted: "#7A9B83",
+  textLight: "#B5CEBC",
+
+  // 기타
+  border: "#DFF0E5",
+  success: "#2D7D5E",
+  successLight: "#2D7D5E22",
+  danger: "#E76F51",
+  dangerLight: "#E76F5122",
+
+  // 카테고리별 주스 컬러
   category: {
-    "투자": "#f4a261",
-    "육아": "#e76f51",
-    "자기계발": "#2a9d8f",
-    "업무": "#457b9d",
-    "건강": "#2d6a4f",
+    "투자":    "#F4A261",
+    "육아":    "#E76F51",
+    "자기계발": "#52A67A",
+    "업무":    "#457B9D",
+    "건강":    "#2D6A4F",
+    "인문학":  "#9B72CF",
+    "경제":    "#F4C430",
   } as Record<string, string>,
 };
 
 export const SHADOWS = {
   card: {
-    shadowColor: "#000",
+    shadowColor: "#2D7D5E",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.07,
+    shadowOpacity: 0.08,
     shadowRadius: 8,
     elevation: 3,
   },
