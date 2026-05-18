@@ -29,6 +29,12 @@
     },
     "plugins": [
       "expo-asset"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "8f7b117d-107b-4ef0-bde0-2a8b14da1b5c"
+      }
+    },
+    "owner": "moontae"
   }
 }
