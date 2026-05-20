@@ -1,203 +1,269 @@
 import os
 import uuid
+import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
+
+_DB_PATH = Path(__file__).parent.parent / "data.db"
 
 
-def _is_mock() -> bool:
+def _is_supabase() -> bool:
     url = os.getenv("SUPABASE_URL", "")
-    return not url or "your_" in url
-
-
-# ── 인메모리 스토리지 (Supabase 미설정 시 사용) ──────────────────────────
-_mem: dict = {"books": {}, "action_items": {}, "user_logs": {}}
+    return bool(url) and "your_" not in url
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# ── Supabase 클라이언트 (설정된 경우만) ──────────────────────────────────
+def _get_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_db():
+    with _get_conn() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS books (
+                id          TEXT PRIMARY KEY,
+                title       TEXT NOT NULL,
+                author      TEXT DEFAULT '',
+                publisher   TEXT DEFAULT '',
+                thumbnail   TEXT DEFAULT '',
+                description TEXT DEFAULT '',
+                category    TEXT DEFAULT '',
+                isbn        TEXT DEFAULT '',
+                created_at  TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS action_items (
+                id         TEXT PRIMARY KEY,
+                book_id    TEXT NOT NULL,
+                point      TEXT NOT NULL,
+                action     TEXT NOT NULL,
+                example    TEXT NOT NULL,
+                page       TEXT DEFAULT '',
+                category   TEXT DEFAULT '자기계발',
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS user_logs (
+                id             TEXT PRIMARY KEY,
+                action_item_id TEXT NOT NULL,
+                device_id      TEXT NOT NULL,
+                status         TEXT NOT NULL DEFAULT 'pending',
+                note           TEXT DEFAULT '',
+                created_at     TEXT NOT NULL,
+                UNIQUE(action_item_id, device_id)
+            );
+        """)
+
+
+_init_db()
+
+
+def _row(r) -> dict:
+    return dict(r) if r else None
+
+
+# ── Supabase 클라이언트 ───────────────────────────────────────────────────
 def _get_client():
     from supabase import create_client
-    url = os.getenv("SUPABASE_URL", "")
-    key = os.getenv("SUPABASE_KEY", "")
-    return create_client(url, key)
+    return create_client(os.getenv("SUPABASE_URL", ""), os.getenv("SUPABASE_KEY", ""))
 
 
 # ── Books ────────────────────────────────────────────────────────────────
 async def upsert_book(
-    title: str,
-    author: str,
-    publisher: str = "",
-    thumbnail: str = "",
-    description: str = "",
-    category: str = "",
-    isbn: str = "",
+    title: str, author: str = "", publisher: str = "",
+    thumbnail: str = "", description: str = "",
+    category: str = "", isbn: str = "",
 ) -> dict:
-    book_id = str(uuid.uuid4())
-    data = {
-        "id": book_id, "title": title, "author": author,
-        "publisher": publisher, "thumbnail": thumbnail,
-        "description": description, "category": category,
-        "isbn": isbn, "created_at": _now(),
-    }
-    if _is_mock():
-        # isbn이 같으면 기존 것 재사용
-        for b in _mem["books"].values():
-            if isbn and b.get("isbn") == isbn:
-                return b
-        _mem["books"][book_id] = data
-        return data
-    db = _get_client()
-    result = db.table("books").upsert(data, on_conflict="isbn").execute()
-    return result.data[0] if result.data else data
+    if _is_supabase():
+        db = _get_client()
+        data = {
+            "id": str(uuid.uuid4()), "title": title, "author": author,
+            "publisher": publisher, "thumbnail": thumbnail,
+            "description": description, "category": category,
+            "isbn": isbn, "created_at": _now(),
+        }
+        result = db.table("books").upsert(data, on_conflict="isbn").execute()
+        return result.data[0] if result.data else data
+
+    with _get_conn() as conn:
+        # isbn 중복이면 기존 행 반환
+        if isbn:
+            row = conn.execute("SELECT * FROM books WHERE isbn = ?", (isbn,)).fetchone()
+            if row:
+                return _row(row)
+        book_id = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO books (id,title,author,publisher,thumbnail,description,category,isbn,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (book_id, title, author, publisher, thumbnail, description, category, isbn, _now()),
+        )
+    return {"id": book_id, "title": title, "author": author, "publisher": publisher,
+            "thumbnail": thumbnail, "description": description, "category": category,
+            "isbn": isbn}
 
 
 async def get_books() -> list[dict]:
-    if _is_mock():
-        return sorted(_mem["books"].values(), key=lambda x: x["created_at"], reverse=True)
-    db = _get_client()
-    result = db.table("books").select("*").order("created_at", desc=True).execute()
-    return result.data or []
+    if _is_supabase():
+        db = _get_client()
+        return db.table("books").select("*").order("created_at", desc=True).execute().data or []
+    with _get_conn() as conn:
+        rows = conn.execute("SELECT * FROM books ORDER BY created_at DESC").fetchall()
+    return [_row(r) for r in rows]
 
 
 async def get_book_by_id(book_id: str) -> dict | None:
-    if _is_mock():
-        return _mem["books"].get(book_id)
-    db = _get_client()
-    result = db.table("books").select("*").eq("id", book_id).single().execute()
-    return result.data
+    if _is_supabase():
+        db = _get_client()
+        return db.table("books").select("*").eq("id", book_id).single().execute().data
+    with _get_conn() as conn:
+        row = conn.execute("SELECT * FROM books WHERE id = ?", (book_id,)).fetchone()
+    return _row(row)
 
 
 # ── Action Items ─────────────────────────────────────────────────────────
 async def save_action_items(book_id: str, items: list[dict]) -> list[dict]:
-    rows = []
-    for item in items:
-        rows.append({
-            "id": str(uuid.uuid4()),
-            "book_id": book_id,
-            "point": item.get("point", ""),
-            "action": item.get("action", ""),
-            "example": item.get("example", ""),
-            "page": item.get("page", ""),
-            "category": item.get("category", "자기계발"),
-            "created_at": _now(),
-        })
-    if _is_mock():
-        for row in rows:
-            _mem["action_items"][row["id"]] = row
-        return rows
-    db = _get_client()
-    result = db.table("action_items").insert(rows).execute()
-    return result.data or rows
+    rows = [
+        {
+            "id": str(uuid.uuid4()), "book_id": book_id,
+            "point": item.get("point", ""), "action": item.get("action", ""),
+            "example": item.get("example", ""), "page": item.get("page", ""),
+            "category": item.get("category", "자기계발"), "created_at": _now(),
+        }
+        for item in items
+    ]
+    if _is_supabase():
+        db = _get_client()
+        return db.table("action_items").insert(rows).execute().data or rows
+
+    with _get_conn() as conn:
+        conn.executemany(
+            "INSERT INTO action_items (id,book_id,point,action,example,page,category,created_at) "
+            "VALUES (:id,:book_id,:point,:action,:example,:page,:category,:created_at)",
+            rows,
+        )
+    return rows
 
 
 async def get_action_items_by_book(book_id: str) -> list[dict]:
-    if _is_mock():
-        items = [i for i in _mem["action_items"].values() if i["book_id"] == book_id]
-        book = _mem["books"].get(book_id, {})
-        for i in items:
-            i["book_title"] = book.get("title", "")
-        return items
-    db = _get_client()
-    result = (
-        db.table("action_items")
-        .select("*, books(title)")
-        .eq("book_id", book_id)
-        .execute()
-    )
-    return result.data or []
+    if _is_supabase():
+        db = _get_client()
+        rows = db.table("action_items").select("*, books(title)").eq("book_id", book_id).execute().data or []
+        return rows
+
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT a.*, b.title AS book_title FROM action_items a "
+            "JOIN books b ON a.book_id = b.id WHERE a.book_id = ?",
+            (book_id,),
+        ).fetchall()
+    return [_row(r) for r in rows]
 
 
 async def get_all_action_items(category: str | None = None) -> list[dict]:
-    if _is_mock():
-        items = list(_mem["action_items"].values())
+    if _is_supabase():
+        db = _get_client()
+        query = db.table("action_items").select("*, books(title)")
         if category:
-            items = [i for i in items if i.get("category") == category]
-        for i in items:
-            book = _mem["books"].get(i["book_id"], {})
-            i["book_title"] = book.get("title", "")
-        return sorted(items, key=lambda x: x["created_at"], reverse=True)
-    db = _get_client()
-    query = db.table("action_items").select("*, books(title)")
-    if category:
-        query = query.eq("category", category)
-    result = query.order("created_at", desc=True).execute()
-    return result.data or []
+            query = query.eq("category", category)
+        rows = query.order("created_at", desc=True).execute().data or []
+        for item in rows:
+            if item.get("books"):
+                item["book_title"] = item["books"]["title"]
+                del item["books"]
+        return rows
+
+    sql = (
+        "SELECT a.*, b.title AS book_title FROM action_items a "
+        "JOIN books b ON a.book_id = b.id "
+        + ("WHERE a.category = ? " if category else "")
+        + "ORDER BY a.created_at DESC"
+    )
+    with _get_conn() as conn:
+        rows = conn.execute(sql, (category,) if category else ()).fetchall()
+    return [_row(r) for r in rows]
 
 
 async def get_action_item_by_id(item_id: str) -> dict | None:
-    if _is_mock():
-        item = _mem["action_items"].get(item_id)
-        if item:
-            book = _mem["books"].get(item["book_id"], {})
-            item["book_title"] = book.get("title", "")
-        return item
-    db = _get_client()
-    result = (
-        db.table("action_items")
-        .select("*, books(title)")
-        .eq("id", item_id)
-        .single()
-        .execute()
-    )
-    return result.data
+    if _is_supabase():
+        db = _get_client()
+        return db.table("action_items").select("*, books(title)").eq("id", item_id).single().execute().data
+
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT a.*, b.title AS book_title FROM action_items a "
+            "JOIN books b ON a.book_id = b.id WHERE a.id = ?",
+            (item_id,),
+        ).fetchone()
+    return _row(row)
 
 
 # ── User Logs ────────────────────────────────────────────────────────────
 async def upsert_user_log(
     action_item_id: str, status: str, note: str = "", device_id: str = "anonymous"
 ) -> dict:
-    if _is_mock():
-        for log in _mem["user_logs"].values():
-            if log["action_item_id"] == action_item_id and log.get("device_id") == device_id:
-                log.update({"status": status, "note": note})
-                return log
-        log_id = str(uuid.uuid4())
+    if _is_supabase():
+        db = _get_client()
         data = {
-            "id": log_id, "action_item_id": action_item_id,
+            "id": str(uuid.uuid4()), "action_item_id": action_item_id,
             "device_id": device_id, "status": status,
             "note": note, "created_at": _now(),
         }
-        _mem["user_logs"][log_id] = data
-        return data
-    db = _get_client()
-    log_id = str(uuid.uuid4())
-    data = {
-        "id": log_id, "action_item_id": action_item_id,
-        "device_id": device_id, "status": status,
-        "note": note, "created_at": _now(),
-    }
-    result = db.table("user_logs").upsert(
-        data, on_conflict="action_item_id,device_id"
-    ).execute()
-    return result.data[0] if result.data else data
+        result = db.table("user_logs").upsert(data, on_conflict="action_item_id,device_id").execute()
+        return result.data[0] if result.data else data
+
+    with _get_conn() as conn:
+        existing = conn.execute(
+            "SELECT id, created_at FROM user_logs WHERE action_item_id=? AND device_id=?",
+            (action_item_id, device_id),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE user_logs SET status=?, note=? WHERE action_item_id=? AND device_id=?",
+                (status, note, action_item_id, device_id),
+            )
+            log_id, created_at = existing["id"], existing["created_at"]
+        else:
+            log_id = str(uuid.uuid4())
+            created_at = _now()
+            conn.execute(
+                "INSERT INTO user_logs (id,action_item_id,device_id,status,note,created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (log_id, action_item_id, device_id, status, note, created_at),
+            )
+    return {"id": log_id, "action_item_id": action_item_id, "device_id": device_id,
+            "status": status, "note": note, "created_at": created_at}
 
 
 async def delete_user_log(action_item_id: str, device_id: str = "anonymous") -> None:
-    if _is_mock():
-        to_del = [
-            k for k, v in _mem["user_logs"].items()
-            if v["action_item_id"] == action_item_id and v.get("device_id") == device_id
-        ]
-        for k in to_del:
-            del _mem["user_logs"][k]
+    if _is_supabase():
+        _get_client().table("user_logs").delete().eq("action_item_id", action_item_id).eq("device_id", device_id).execute()
         return
-    db = _get_client()
-    db.table("user_logs").delete().eq("action_item_id", action_item_id).eq("device_id", device_id).execute()
+    with _get_conn() as conn:
+        conn.execute(
+            "DELETE FROM user_logs WHERE action_item_id=? AND device_id=?",
+            (action_item_id, device_id),
+        )
 
 
 async def get_user_logs(
     action_item_id: str | None = None, device_id: str = "anonymous"
 ) -> list[dict]:
-    if _is_mock():
-        logs = [v for v in _mem["user_logs"].values() if v.get("device_id") == device_id]
+    if _is_supabase():
+        db = _get_client()
+        query = db.table("user_logs").select("*").eq("device_id", device_id)
         if action_item_id:
-            logs = [l for l in logs if l["action_item_id"] == action_item_id]
-        return sorted(logs, key=lambda x: x["created_at"], reverse=True)
-    db = _get_client()
-    query = db.table("user_logs").select("*").eq("device_id", device_id)
-    if action_item_id:
-        query = query.eq("action_item_id", action_item_id)
-    result = query.order("created_at", desc=True).execute()
-    return result.data or []
+            query = query.eq("action_item_id", action_item_id)
+        return query.order("created_at", desc=True).execute().data or []
+
+    sql = (
+        "SELECT * FROM user_logs WHERE device_id=? "
+        + ("AND action_item_id=? " if action_item_id else "")
+        + "ORDER BY created_at DESC"
+    )
+    params = (device_id, action_item_id) if action_item_id else (device_id,)
+    with _get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_row(r) for r in rows]
