@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, HTTPException, Query
 from models.schemas import GenerateActionsRequest
 from services import naver_service, ai_service, supabase_service
@@ -56,13 +57,15 @@ async def generate_actions(req: GenerateActionsRequest):
 async def _generate_summary_and_items(
     book_title: str, author: str, reviews: list[str], book_category: str | None
 ):
-    """요약과 액션 아이템을 순차 생성 (카테고리 공유)"""
-    items = await ai_service.generate_action_items(
-        book_title, author, reviews, book_category
-    )
-    final_category = items[0]["category"] if items else "자기계발"
-    summary = await ai_service.generate_book_summary(
-        book_title, author, reviews, final_category
+    """카테고리를 먼저 확정한 뒤 요약·액션을 병렬 생성 (총 시간 단축)"""
+    # 1. 카테고리 확정 (빠름: BOOK_DB 조회 → 키워드 → Gemini)
+    if not book_category or book_category not in ai_service.VALID_CATEGORIES:
+        book_category = await ai_service._determine_book_category(book_title, author)
+
+    # 2. 액션 아이템 + 요약 병렬 실행
+    items, summary = await asyncio.gather(
+        ai_service.generate_action_items(book_title, author, reviews, book_category),
+        ai_service.generate_book_summary(book_title, author, reviews, book_category),
     )
     return summary, items
 

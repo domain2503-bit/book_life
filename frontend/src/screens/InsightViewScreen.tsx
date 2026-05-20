@@ -35,6 +35,7 @@ export default function InsightViewScreen({ navigation }: Props) {
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [autocompleteLoading, setAutocompleteLoading] = useState(false);
+  const [searchFired, setSearchFired] = useState(false);
   const [categoryLoading, setCategoryLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
@@ -49,9 +50,11 @@ export default function InsightViewScreen({ navigation }: Props) {
     if (searchText.trim().length < 2) {
       setSuggestions([]);
       setShowSuggestions(false);
+      setSearchFired(false);
       return;
     }
     debounceRef.current = setTimeout(async () => {
+      setSearchFired(true);
       setAutocompleteLoading(true);
       try {
         const res = await searchBooks(searchText.trim());
@@ -149,9 +152,14 @@ export default function InsightViewScreen({ navigation }: Props) {
       });
     } catch (e: any) {
       if (controller.signal.aborted) return;
+      const status = e?.response?.status;
       const msg =
         e?.response?.data?.detail ??
-        (e?.code === "ECONNABORTED" ? "요청 시간이 초과됐습니다." : "인사이트 생성 중 오류가 발생했습니다.");
+        (status === 504 || status === 502
+          ? "서버 응답 시간이 초과됐습니다.\n잠시 후 다시 시도해주세요."
+          : e?.code === "ECONNABORTED"
+          ? "요청 시간이 초과됐습니다.\n잠시 후 다시 시도해주세요."
+          : "인사이트 생성 중 오류가 발생했습니다.");
       setErrorBook(book);
       setGenerationError(msg);
     } finally {
@@ -339,7 +347,7 @@ export default function InsightViewScreen({ navigation }: Props) {
         )}
 
         {/* 검색 결과 없을 때 직접 생성 유도 */}
-        {!autocompleteLoading && searchText.trim().length >= 2 && suggestions.length === 0 && showSuggestions === false && (
+        {searchFired && !autocompleteLoading && searchText.trim().length >= 2 && suggestions.length === 0 && showSuggestions === false && (
           <View style={styles.dropdown}>
             <TouchableOpacity
               style={styles.dropdownItem}

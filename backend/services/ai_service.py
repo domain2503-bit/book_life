@@ -197,7 +197,7 @@ async def _determine_book_category(book_title: str, author: str, description: st
 
     client = _get_client()
     prompt = CLASSIFY_PROMPT.format(title=book_title, author=author)
-    response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+    response = await client.aio.models.generate_content(model="gemini-2.5-flash", contents=prompt)
     result = response.text.strip()
     return result if result in VALID_CATEGORIES else "자기계발"
 
@@ -221,7 +221,7 @@ async def generate_action_items(
         category=book_category,
         reviews=reviews_text[:8000],
     )
-    response = client.models.generate_content(
+    response = await client.aio.models.generate_content(
         model="gemini-2.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
@@ -282,7 +282,7 @@ async def generate_book_summary(
 - 3문단(3-4문장): 독자가 얻을 수 있는 가치와 실천 포인트
 
 각 문단은 \\n\\n으로 구분. 한국어 요약만 반환, 다른 텍스트 없음."""
-    response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+    response = await client.aio.models.generate_content(model="gemini-2.5-flash", contents=prompt)
     return response.text.strip()
 
 
@@ -303,7 +303,7 @@ JSON 배열로 반환:
 [{{"isbn": "isbn값", "category": "투자|육아|자기계발|업무|건강 중 하나"}}]
 
 JSON만 반환."""
-    response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+    response = await client.aio.models.generate_content(model="gemini-2.5-flash", contents=prompt)
     return json.loads(_extract_json(response.text.strip()))
 
 
