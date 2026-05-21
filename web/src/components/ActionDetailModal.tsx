@@ -16,16 +16,18 @@ interface Props {
 }
 
 function Paragraphs({ text, className }: { text: string; className?: string }) {
+  const paragraphs = text
+    .split(/\n\n+/)
+    .map((p) => p.replace(/\n/g, " ").trim())
+    .filter(Boolean);
+
   return (
-    <div className="space-y-3">
-      {text
-        .split(/\n\n|\n/)
-        .filter((p) => p.trim())
-        .map((p, i) => (
-          <p key={i} className={className}>
-            {p.trim()}
-          </p>
-        ))}
+    <div className="space-y-4">
+      {paragraphs.map((p, i) => (
+        <p key={i} className={className}>
+          {p}
+        </p>
+      ))}
     </div>
   );
 }
