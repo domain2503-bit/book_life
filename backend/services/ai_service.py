@@ -1,11 +1,12 @@
 from google import genai
 from google.genai import types
+import asyncio
 import json
 import os
 import re
 
 
-VALID_CATEGORIES = {"투자", "육아", "자기계발", "업무", "건강"}
+VALID_CATEGORIES = {"경제경영", "자기계발", "인문", "유아", "건강", "산업트렌드"}
 
 
 def _is_mock() -> bool:
@@ -143,6 +144,24 @@ def _lookup_book_category(book_title: str) -> str | None:
     return None
 
 
+async def _call_gemini(client, model: str, contents: str, config=None):
+    """Gemini 호출 래퍼 — RPM 429는 30s 대기 후 1회 재시도, 일일 한도 429는 즉시 재raise"""
+    for attempt in range(2):
+        try:
+            if config:
+                return await client.aio.models.generate_content(model=model, contents=contents, config=config)
+            return await client.aio.models.generate_content(model=model, contents=contents)
+        except Exception as e:
+            err = str(e)
+            if "429" in err and attempt == 0:
+                # 일일 한도 초과는 재시도해도 의미 없음
+                if "PerDay" in err or "per_day" in err.lower():
+                    raise
+                await asyncio.sleep(30)
+                continue
+            raise
+
+
 # ── 실제 AI 호출 ────────────────────────────────────────────────────────
 
 CLASSIFY_PROMPT = """다음 도서의 카테고리를 분류하라.
@@ -150,7 +169,7 @@ CLASSIFY_PROMPT = """다음 도서의 카테고리를 분류하라.
 도서 제목: {title}
 저자: {author}
 
-반드시 [투자, 육아, 자기계발, 업무, 건강] 중 하나만 반환하라.
+반드시 [경제경영, 자기계발, 인문, 유아, 건강, 산업트렌드] 중 하나만 반환하라.
 다른 텍스트 없이 카테고리 단어 하나만 반환."""
 
 ACTION_PROMPT_TEMPLATE = """다음 도서의 서평을 분석해 최소 15개의 실천 액션 아이템을 JSON 배열로 추출하라.
@@ -197,9 +216,14 @@ async def _determine_book_category(book_title: str, author: str, description: st
 
     client = _get_client()
     prompt = CLASSIFY_PROMPT.format(title=book_title, author=author)
-    response = await client.aio.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+    response = await _call_gemini(client, "gemini-2.5-flash-lite", prompt)
     result = response.text.strip()
-    return result if result in VALID_CATEGORIES else "자기계발"
+    if result in VALID_CATEGORIES:
+        return result
+    for cat in VALID_CATEGORIES:
+        if cat in result:
+            return cat
+    return "자기계발"
 
 
 async def generate_action_items(
@@ -221,15 +245,14 @@ async def generate_action_items(
         category=book_category,
         reviews=reviews_text[:8000],
     )
-    response = await client.aio.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
+    response = await _call_gemini(
+        client, "gemini-2.5-flash-lite", prompt,
         config=types.GenerateContentConfig(
             system_instruction="당신은 독서 인사이트 추출 전문가입니다. 반드시 JSON 배열만 반환하세요."
         ),
     )
     raw = response.text.strip()
-    items = json.loads(_extract_json(raw))
+    items = json.loads(_sanitize_json(_extract_json(raw)))
 
     # 모든 아이템에 동일 카테고리 강제 적용
     for item in items:
@@ -282,7 +305,7 @@ async def generate_book_summary(
 - 3문단(3-4문장): 독자가 얻을 수 있는 가치와 실천 포인트
 
 각 문단은 \\n\\n으로 구분. 한국어 요약만 반환, 다른 텍스트 없음."""
-    response = await client.aio.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+    response = await _call_gemini(client, "gemini-2.5-flash-lite", prompt)
     return response.text.strip()
 
 
@@ -303,10 +326,16 @@ JSON 배열로 반환:
 [{{"isbn": "isbn값", "category": "투자|육아|자기계발|업무|건강 중 하나"}}]
 
 JSON만 반환."""
-    response = await client.aio.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-    return json.loads(_extract_json(response.text.strip()))
+    response = await _call_gemini(client, "gemini-2.5-flash-lite", prompt)
+    return json.loads(_sanitize_json(_extract_json(response.text.strip())))
 
 
 def _extract_json(text: str) -> str:
     match = re.search(r"\[.*\]", text, re.DOTALL)
     return match.group(0) if match else text
+
+
+def _sanitize_json(text: str) -> str:
+    """Gemini가 반환한 JSON의 잘못된 백슬래시 이스케이프 수정"""
+    # 유효한 JSON 이스케이프: \", \\, \/, \b, \f, \n, \r, \t, \uXXXX
+    return re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)

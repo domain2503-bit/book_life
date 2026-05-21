@@ -10,6 +10,25 @@ router = APIRouter(prefix="/actions", tags=["actions"])
 async def generate_actions(req: GenerateActionsRequest):
     """도서 서평 기반 AI 액션 아이템 15개 이상 생성 + DB 저장"""
     try:
+        # 0. 캐시 확인: DB에 이미 있으면 Gemini 호출 없이 즉시 반환
+        existing_book = await supabase_service.get_book_by_title(req.book_title)
+        if existing_book:
+            cached_items = await supabase_service.get_action_items_by_book(existing_book["id"])
+            if len(cached_items) >= 10:
+                for item in cached_items:
+                    if item.get("books"):
+                        item["book_title"] = item["books"]["title"]
+                        del item["books"]
+                return {
+                    "book_id": existing_book["id"],
+                    "book_title": req.book_title,
+                    "book_category": existing_book.get("category", "자기계발"),
+                    "book_summary": existing_book.get("summary", ""),
+                    "review_sources": [],
+                    "total": len(cached_items),
+                    "action_items": cached_items,
+                }
+
         # 1. 서평 수집 (URL 포함)
         review_sources: list[str] = []
         if req.reviews:
@@ -37,6 +56,7 @@ async def generate_actions(req: GenerateActionsRequest):
             title=req.book_title,
             author=req.author,
             category=final_category,
+            summary=summary,
         )
         book_id = book["id"]
         saved = await supabase_service.save_action_items(book_id, items)
@@ -50,8 +70,16 @@ async def generate_actions(req: GenerateActionsRequest):
             "total": len(saved),
             "action_items": saved,
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        err = str(e)
+        if "429" in err or "RESOURCE_EXHAUSTED" in err:
+            raise HTTPException(
+                status_code=429,
+                detail="AI 사용량 한도를 초과했습니다. 잠시 후 다시 시도해주세요.",
+            )
+        raise HTTPException(status_code=500, detail=err)
 
 
 async def _generate_summary_and_items(
@@ -72,7 +100,7 @@ async def _generate_summary_and_items(
 
 @router.get("/")
 async def list_action_items(
-    category: str | None = Query(None, description="카테고리 필터: 투자|육아|자기계발|업무|건강"),
+    category: str | None = Query(None, description="카테고리 필터: 경제경영|자기계발|인문|유아|건강|산업트렌드"),
 ):
     """저장된 액션 아이템 목록 (카테고리 필터 가능)"""
     try:

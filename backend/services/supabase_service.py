@@ -34,6 +34,7 @@ def _init_db():
                 description TEXT DEFAULT '',
                 category    TEXT DEFAULT '',
                 isbn        TEXT DEFAULT '',
+                summary     TEXT DEFAULT '',
                 created_at  TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS action_items (
@@ -56,6 +57,11 @@ def _init_db():
                 UNIQUE(action_item_id, device_id)
             );
         """)
+        # Migration for existing databases without summary column
+        try:
+            conn.execute("ALTER TABLE books ADD COLUMN summary TEXT DEFAULT ''")
+        except Exception:
+            pass
 
 
 _init_db()
@@ -75,34 +81,65 @@ def _get_client():
 async def upsert_book(
     title: str, author: str = "", publisher: str = "",
     thumbnail: str = "", description: str = "",
-    category: str = "", isbn: str = "",
+    category: str = "", isbn: str = "", summary: str = "",
 ) -> dict:
     if _is_supabase():
         db = _get_client()
+        # isbn 또는 title로 기존 책 조회
+        existing = None
+        if isbn:
+            r = db.table("books").select("*").eq("isbn", isbn).limit(1).execute()
+            existing = r.data[0] if r.data else None
+        if not existing:
+            r = db.table("books").select("*").eq("title", title).limit(1).execute()
+            existing = r.data[0] if r.data else None
+        if existing:
+            if summary or category:
+                db.table("books").update({
+                    "category": category or existing.get("category", ""),
+                    "summary": summary or existing.get("summary", ""),
+                }).eq("id", existing["id"]).execute()
+                existing["category"] = category or existing.get("category", "")
+                existing["summary"] = summary or existing.get("summary", "")
+            return existing
         data = {
             "id": str(uuid.uuid4()), "title": title, "author": author,
             "publisher": publisher, "thumbnail": thumbnail,
             "description": description, "category": category,
-            "isbn": isbn, "created_at": _now(),
+            "isbn": isbn, "summary": summary, "created_at": _now(),
         }
-        result = db.table("books").upsert(data, on_conflict="isbn").execute()
+        result = db.table("books").insert(data).execute()
         return result.data[0] if result.data else data
 
     with _get_conn() as conn:
-        # isbn 중복이면 기존 행 반환
+        # isbn 중복이면 기존 행 업데이트 후 반환
         if isbn:
             row = conn.execute("SELECT * FROM books WHERE isbn = ?", (isbn,)).fetchone()
             if row:
-                return _row(row)
+                if summary:
+                    conn.execute(
+                        "UPDATE books SET category=?, summary=? WHERE isbn=?",
+                        (category or _row(row)["category"], summary, isbn),
+                    )
+                return _row(conn.execute("SELECT * FROM books WHERE isbn = ?", (isbn,)).fetchone())
+        # title 중복 체크 (isbn 없는 경우)
+        row = conn.execute("SELECT * FROM books WHERE title = ? LIMIT 1", (title,)).fetchone()
+        if row:
+            if summary or category:
+                conn.execute(
+                    "UPDATE books SET category=?, summary=? WHERE id=?",
+                    (category or _row(row)["category"], summary or _row(row)["summary"], _row(row)["id"]),
+                )
+            return _row(conn.execute("SELECT * FROM books WHERE title = ? LIMIT 1", (title,)).fetchone())
         book_id = str(uuid.uuid4())
         conn.execute(
-            "INSERT INTO books (id,title,author,publisher,thumbnail,description,category,isbn,created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
-            (book_id, title, author, publisher, thumbnail, description, category, isbn, _now()),
+            "INSERT INTO books (id,title,author,publisher,thumbnail,description,category,isbn,summary,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (book_id, title, author, publisher, thumbnail, description, category, isbn, summary, _now()),
         )
     return {"id": book_id, "title": title, "author": author, "publisher": publisher,
             "thumbnail": thumbnail, "description": description, "category": category,
-            "isbn": isbn}
+            "isbn": isbn, "summary": summary}
 
 
 async def get_books() -> list[dict]:
@@ -120,6 +157,16 @@ async def get_book_by_id(book_id: str) -> dict | None:
         return db.table("books").select("*").eq("id", book_id).single().execute().data
     with _get_conn() as conn:
         row = conn.execute("SELECT * FROM books WHERE id = ?", (book_id,)).fetchone()
+    return _row(row)
+
+
+async def get_book_by_title(title: str) -> dict | None:
+    if _is_supabase():
+        db = _get_client()
+        result = db.table("books").select("*").eq("title", title).limit(1).execute()
+        return result.data[0] if result.data else None
+    with _get_conn() as conn:
+        row = conn.execute("SELECT * FROM books WHERE title = ? LIMIT 1", (title,)).fetchone()
     return _row(row)
 
 
